@@ -18,6 +18,12 @@ dd <- readRDS("Dataset/extinction.week.Rdata")
 str(dd)
 summary(dd)
 
+## add body mass to data set
+bodysize <- read.csv("Dataset/sizes.csv")
+dd <- bodysize %>%
+    select(species = spp.names2, mass) %>%
+    right_join(dd, by = "species")
+
 ## visualize how long species persisted stratified by experimental conditions
 dd$condition <- paste0("Temperature: ", dd$temp,
                        "°C x Energy: ", dd$energy)
@@ -58,7 +64,7 @@ plotDF$condition <- paste0("Temperature: ", plotDF$temp,
                            "°C x Energy: ", plotDF$energy)
 
 ## plot survival curves
-ggplot(data = plotDF, aes(x = time , y = surv, color = condition)) +
+ggplot(data = plotDF, aes(x = time , y = surv, color = condition)) + 
     geom_step(alpha = 0.8) + 
     facet_wrap(~ species, ncol = 4) +
     scale_x_continuous(minor_breaks = NULL) +
@@ -75,3 +81,7 @@ survived all 8 weeks. The estimated survivor curves look odd in both cases.
 experimental conditions.
 
 * The survival of some species seems unaffected by the experimental conditions.
+
+```{r}
+sessionInfo()
+```
