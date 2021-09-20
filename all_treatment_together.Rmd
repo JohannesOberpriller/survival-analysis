@@ -200,8 +200,8 @@ for(i in 1:N){
 }
 
 ggplot(df) +
-  geom_density(aes(x = prior_lambda, fill = "blue"), position = "identity") +
-  geom_density(aes(x = posterior_lambda, fill = "red"), position = "identity") +
+  geom_density(aes(x = prior_lambda, fill = "red"), position = "identity") +
+  geom_density(aes(x = posterior_lambda, fill = "blue"), position = "identity") +
   facet_wrap(~mean, labeller = as_labeller(c("0.2" = "Mean = SD = 0.2",
                                             "0.3" = "Mean = SD = 0.3",
                                             "0.4" = "Mean = SD = 0.4"))) +
