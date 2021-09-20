@@ -1,0 +1,243 @@
+---
+title: "Consider all species and treatments together"
+output: pdf_document
+---
+
+```{r message = FALSE, warning = FALSE, results='hide'}
+# 23.08.2021
+# In this analysis, we take all the species and treatments together
+
+if ( ! require(runjags )) { install.packages("runjags" ); library(runjags ) }
+if ( ! require(rjags )) { install.packages("rjags" ); library(rjags ) }
+if ( ! require(bbmle )) { install.packages("bbmle" ); library(bbmle ) }
+if ( ! require(ggpubr )) { install.packages("ggpubr" ); library(ggpubr ) }
+if ( ! require(reshape2 )) { install.packages("reshape2"); library(reshape2) }
+if ( ! require(IDPmisc )) { install.packages("IDPmisc" ); library(IDPmisc ) }
+
+dd <- readRDS("Dataset/extinction.week.Rdata")
+
+## Just for some plotting, not for analysis
+## Add 0.5 to get approx. extinction time
+dd$week.persist <- dd$week.persist + 0.5
+
+## Set the extant populations to an extinction time of 20 weeks
+dd <- transform(dd, dd.fm=ifelse(week.persist==8.5, 20, week.persist))
+
+## For potential survival analysis
+## Make binary (0 or 1) variables for temperature and energy treatments
+dd <- transform(dd, temp.var=ifelse(temp==15, 0, 1))
+dd <- transform(dd, energy.var=ifelse(energy==0.275, 0, 1))
+
+
+## Define day1 (the last week at which the species was observed)
+## Define day2 (the first week when the species was not observed)
+dd <- transform(dd, day1=week.persist-0.5)
+dd <- transform(dd, day2=week.persist+0.5)
+
+## Set a censored observation to Inf
+dd$day2 <- ifelse(dd$day2==9, Inf, dd$day2)
+
+##########################################################
+## Let's check the dataset after this first transformation
+head(dd)
+
+## define a JAGS object for our model
+file.jags.model <- "survival.jags"
+
+## define the number of iterations of the Markov Chain
+sampsize <- 10000
+
+
+## transform the data to get the counts of the extinction events
+data.survival.frame <- data.frame(matrix(ncol=3,nrow=8,0))
+colnames(data.survival.frame) <- c("var","t","data")
+
+#### We consider all the species and treatments together
+spp.dd <- dd
+
+#### count the extinction events during the different weeks
+ww <- 1
+for(ww in 1:8){
+  data.survival.frame[ww,"var"] <-paste("Extinction ",ww,sep="")
+  data.survival.frame[ww,"t"] <-ww
+  data.survival.frame[ww,"data"]<-length(which(spp.dd$day2==ww))
+}
+
+## compile the data
+## nuber of replicates
+N <- 200
+## count of ectinction events
+# y <- c(data.survival.frame$data,N-sum(data.survival.frame$data))
+
+y <- c(data.survival.frame$data,dim(dd)[1]-sum(data.survival.frame$data))
+
+## time intervals
+## note that we set t=1000 for the replicates where the species survived
+t <- c(0,data.survival.frame$t,1000)
+
+## write JAGS model definition file:
+cat("model {\n",
+    " mulog_lambda <- log(mu_lambda)-0.5*sdlog_lambda^2\n",
+    " sdlog_lambda <- sqrt(log(1+sd_lambda^2/mu_lambda^2))\n",
+    " lambda ~ dlnorm(mulog_lambda,1/sdlog_lambda^2)\n",
+    " for ( i in 1:n ) {\n",
+    " p[i] <- exp(-lambda*t[i])-exp(-lambda*t[i+1])\n",
+    " }\n",
+    " y ~ dmulti(p,N)\n",
+    "}\n",
+    sep="",
+    file=file.jags.model)
+
+## run JAGS:
+jags.obj <- jags.model(file.jags.model,
+                       data=list(mu_lambda = 0.2, ### mean of the prior
+                                 sd_lambda = 0.2, ### standard deviation of the prior
+                                 n = nrow(data.survival.frame)+1,
+                                 N = sum(y),
+                                 t = t,
+                                 y = y))
+
+## extract and plot results:
+jags.res <- coda.samples(jags.obj,c("lambda"),sampsize)
+plot(jags.res)
+
+
+## compute and plot the distribution of the inferred Mean time to extinction
+MTE <- 1/as.matrix(jags.res)
+hist(MTE,main="MTE",xlab="time (weeks)")
+
+
+## COMPARE THIS RESULT WITH THE PLOTS OBTAINED BEFORE
+## WHAT CAN YOU TELL ABOUT THE OBSERVED EXTINCTION TIME?
+## TRY TO CHANGE THE PRIORS PARAMETERS, AND SEE HOW THIS AFFECTS THE MTE.
+### first attempt to make a DENSITY PLOT to compare prior and posterior DOUBLE CHECK!!
+## conversion functions that give the mean and sd of associated normal (to put into R)
+mfun <- function(m,s){log(m)-log(1+s^2/m^2)/2}
+sdfun <- function(m,s){sqrt(log(1+(s/m)^2))}
+mu_lambda <- 0.2
+sd_lambda <- 0.2
+### get the mean and sd in log scale
+mul_lambda <- mfun(mu_lambda,sd_lambda)
+sdl_lambda <- sdfun(mu_lambda,sd_lambda)
+### sample from R
+prior_lambda <- rlnorm(sampsize,mul_lambda,sdl_lambda)
+prior_MTE <- 1/prior_lambda
+### posteriros from JAGS output
+posterior_lambda <- as.matrix(jags.res)
+posterior_MTE <- 1/posterior_lambda
+
+### some simple plots
+par(mfrow=c(1,2))
+### prior posterior plots of extinction rates
+plot(density(posterior_lambda), col="red",
+     lwd=3,lty=1,xaxs="i",yaxs="i",
+     main="",
+     xlab=expression(paste("Extinction rate ", lambda , " (1/week)",sep="")),
+     #xaxt="n",
+     #ylim=c(0,MAX_DENSITY),
+     xlim=c(0,1)
+)
+lines(density(prior_lambda), col="blue",lwd=3,lty=1)
+
+
+### prior posterior plots of MTE
+plot(density(posterior_MTE), col="red",
+     lwd=3,lty=1,xaxs="i",yaxs="i",
+     main="",
+     xlab=expression(paste("Mean Time to Extinction (weeks) ",sep="")),
+     #xaxt="n",
+     #ylim=c(0,MAX_DENSITY),
+     xlim=c(0,20)
+)
+lines(density(prior_MTE), col="blue",lwd=3,lty=1)
+legend("topright",legend=c("Prior","Posterior"),lwd=3,cex=0.9,col=c("blue","red"))
+
+
+
+# Vary the mean and sd of normal distribution but keeping the mean equal to the sd
+mu_lambda_all <- c(0.2, 0.3, 0.4)
+sd_lambda_all <- mu_lambda_all
+N <- length(mu_lambda_all)
+
+df <- data.frame(prior_lambda = double(), posterior_lambda = double(),
+                 prior_MTE = double(), posterior_MTE = double(),
+                 mean = factor())
+
+for(i in 1:N){
+  
+  mu_lambda <- mu_lambda_all[i]
+  sd_lambda <- sd_lambda_all[i]
+  
+  ### get the mean and sd in log scale
+  mul_lambda <- mfun(mu_lambda,sd_lambda)
+  sdl_lambda <- sdfun(mu_lambda,sd_lambda)
+  ### sample from R
+  prior_lambda <- rlnorm(sampsize,mul_lambda,sdl_lambda)
+  prior_MTE <- 1/prior_lambda
+  
+  ## run JAGS:
+  jags.obj <- jags.model(file.jags.model,
+                         data=list(mu_lambda = mu_lambda, ### mean of the prior
+                                   sd_lambda = sd_lambda, ### standard deviation of the prior
+                                   n = nrow(data.survival.frame)+1,
+                                   N = sum(y),
+                                   t = t,
+                                   y = y))
+  
+  ## extract and plot results:
+  jags.res <- coda.samples(jags.obj,c("lambda"),sampsize)
+  
+  ### posteriors from JAGS output
+  posterior_lambda <- as.matrix(jags.res)
+  posterior_MTE <- 1/posterior_lambda
+  
+  df <- rbind(df,
+              data.frame(prior_lambda = prior_lambda, posterior_lambda = as.numeric(posterior_lambda),
+                         prior_MTE = prior_MTE, posterior_MTE = as.numeric(posterior_MTE),
+                         mean = as.factor(mu_lambda))
+              )
+  
+}
+
+ggplot(df) +
+  geom_density(aes(x = prior_lambda, fill = "blue"), position = "identity") +
+  geom_density(aes(x = posterior_lambda, fill = "red"), position = "identity") +
+  facet_wrap(~mean, labeller = as_labeller(c("0.2" = "Mean = SD = 0.2",
+                                            "0.3" = "Mean = SD = 0.3",
+                                            "0.4" = "Mean = SD = 0.4"))) +
+  theme_classic() +
+  xlim(c(0,1)) +
+  xlab(expression(paste("Extinction rate ", lambda , " (1/week)",sep=""))) +
+  scale_fill_discrete(name = "",labels = c("blue" = "Posterior", "red" = "Prior")) +
+  ylab("Density")
+  
+```
+
+
+Next, we investigate how the week persist vary with the bodysize. Points are jittered.
+
+```{r message = FALSE, warning = FALSE}
+
+library(dplyr)
+
+dd_old <- readRDS("Dataset/extinction.week.Rdata")
+
+bodysize <- read.csv("Dataset/sizes.csv")
+
+dd <- bodysize %>%
+  select(species = spp.names2, mass) %>%
+  right_join(dd_old, by = "species")
+
+
+ggplot(dd) +
+  geom_point(aes(x = mass, y = week.persist), 
+             position = position_jitter()) +
+  theme_bw() +
+  xlab("Bodysize (mg)") +
+  ylab("Week persist") +
+  scale_x_log10()
+  
+
+```
+
+
